@@ -67,13 +67,15 @@ async function installJava(version: string, folder: string, software: string) {
   }
 }
 
-async function installBedrock(folder: string) {
+async function installBedrock(version: string, folder: string) {
   const page = await fetch('https://www.minecraft.net/en-us/download/server/bedrock', { headers: { 'User-Agent': UA } })
   if (!page.ok) throw new Error('Unable to open the official Bedrock server download page.')
   const html = await page.text()
-  const links = [...html.matchAll(/https?:\/\/[^\"']*bedrock-server-[0-9.]+\.zip/g)].map(match => match[0])
-  const url = links[0]
+  const links = [...html.matchAll(/https?:\/\/[^\"']*bedrock-server-([0-9.]+)\.zip/g)].map(match => ({ url: match[0], version: match[1] }))
+  const exact = links.find(link => link.version === version)
+  const url = exact?.url ?? links[0]?.url
   if (!url) throw new Error('Could not locate the official Windows Bedrock server download.')
+  if (!exact && version) throw new Error(`The official Bedrock page did not expose a download matching ${version}. Refresh the version list and try again.`)
   const zip = path.join(folder, 'bedrock-server.zip')
   await download(url, zip)
   await execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath '${zip.replaceAll("'", "''")}' -DestinationPath '${folder.replaceAll("'", "''")}' -Force`], { windowsHide: true })
@@ -85,7 +87,7 @@ export async function ensureRuntime(edition: 'java' | 'bedrock', version: string
   if (await fs.stat(marker).catch(() => null)) return
   log(`[Pixel Forge] Downloading ${software} ${version}...`)
   await fs.mkdir(folder, { recursive: true })
-  if (edition === 'bedrock') await installBedrock(folder)
+  if (edition === 'bedrock') await installBedrock(version, folder)
   else await installJava(version, folder, software)
   await fs.writeFile(marker, JSON.stringify({ edition, version, software }, null, 2))
   log('[Pixel Forge] Runtime ready.')
