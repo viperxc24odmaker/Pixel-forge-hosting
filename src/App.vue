@@ -39,28 +39,17 @@ async function refresh() {
     notice.value = 'Pixel Forge backend bridge is unavailable. Please launch the Windows Electron app instead of the web preview.'
     return
   }
-
   try {
     const api = window.pixelForge
-    const [systemInfo, relayStatus, serverList] = await Promise.all([
-      api.system.info(),
-      api.relay.status(),
-      api.servers.list(),
-    ])
-
+    const [systemInfo, relayStatus, serverList] = await Promise.all([api.system.info(), api.relay.status(), api.servers.list()])
     system.value = systemInfo
     relay.value = relayStatus
     servers.value = Array.isArray(serverList) ? serverList : []
-
-    if (selected.value) {
-      selected.value = servers.value.find(s => s.id === selected.value?.id) ?? null
-    }
+    if (selected.value) selected.value = servers.value.find(s => s.id === selected.value?.id) ?? null
   } catch (error) {
     console.error('[Pixel Forge] Failed to refresh host state:', error)
     servers.value = []
-    notice.value = error instanceof Error
-      ? `Pixel Forge backend error: ${error.message}`
-      : 'Pixel Forge backend failed to initialize.'
+    notice.value = error instanceof Error ? `Pixel Forge backend error: ${error.message}` : 'Pixel Forge backend failed to initialize.'
   }
 }
 
@@ -69,13 +58,11 @@ async function openServer(server: Server) {
   selected.value = server
   tab.value = 'console'
   logs.value = await window.pixelForge.servers.logs(server.id)
-  window.pixelForge.servers.watchLogs(server.id, payload => {
-    if (payload.id === server.id) logs.value.push(payload.line)
-  })
+  window.pixelForge.servers.watchLogs(server.id, payload => { if (payload.id === server.id) logs.value.push(payload.line) })
 }
 
 async function createServer() {
-  if (!eulaAccepted.value) { notice.value = 'Accept the Minecraft EULA before creating a Java server.'; return }
+  if (edition.value === 'java' && !eulaAccepted.value) { notice.value = 'Accept the Minecraft EULA before creating a Java server.'; return }
   if (!hasBackendBridge()) { await refresh(); return }
   busy.value = true
   notice.value = `Installing ${software.value} ${version.value}… this can take a while the first time.`
@@ -97,12 +84,11 @@ async function start() {
   catch (error) { notice.value = error instanceof Error ? error.message : String(error); await refresh() }
   finally { busy.value = false }
 }
-
 async function stop() { if (!selected.value || !hasBackendBridge()) return; await window.pixelForge.servers.stop(selected.value.id); await refresh() }
 async function restart() { if (!selected.value || !hasBackendBridge()) return; busy.value = true; try { selected.value = await window.pixelForge.servers.restart(selected.value.id); await refresh() } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } finally { busy.value = false } }
 async function sendCommand() { if (!selected.value || !command.value.trim() || !hasBackendBridge()) return; await window.pixelForge.servers.command(selected.value.id, command.value); command.value = '' }
 async function deleteServer() { if (!selected.value || !hasBackendBridge() || !confirm(`Delete ${selected.value.name}? This permanently removes the local server data.`)) return; await window.pixelForge.servers.delete(selected.value.id); selected.value = null; tab.value = 'dashboard'; await refresh() }
-async function loadFiles() { if (!selected.value || !hasBackendBridge()) return; files.value = await window.pixelForge.files.list(selected.value.id); }
+async function loadFiles() { if (!selected.value || !hasBackendBridge()) return; files.value = await window.pixelForge.files.list(selected.value.id) }
 async function readFile(path: string) { if (!selected.value || !hasBackendBridge()) return; fileName.value = path; fileText.value = await window.pixelForge.files.read(selected.value.id, path) }
 async function saveFile() { if (!selected.value || !hasBackendBridge()) return; await window.pixelForge.files.write(selected.value.id, fileName.value, fileText.value); notice.value = `${fileName.value} saved.` }
 async function upload() { if (!selected.value || !hasBackendBridge()) return; const uploaded = await window.pixelForge.files.chooseUpload(selected.value.id); notice.value = uploaded.length ? `Uploaded ${uploaded.join(', ')}` : 'Upload cancelled.'; await loadFiles() }
@@ -125,11 +111,9 @@ onMounted(refresh)
     </div>
     <div class="sidebar-foot">Local-first hosting<br><span>Windows Edition</span></div>
   </aside>
-
   <main class="main">
     <header class="topbar"><div><p class="eyebrow">{{ selected && tab !== 'dashboard' ? selected.name : 'PIXEL FORGE HOSTING' }}</p><h1>{{ tab === 'dashboard' ? 'Dashboard' : tab === 'create' ? 'Create Server' : selected?.name }}</h1></div><div class="relay-pill"><i :class="{on: relay.connected}"></i>{{ relay.connected ? 'Relay connected' : 'Local mode' }}</div></header>
     <div v-if="notice" class="notice" @click="notice = ''">{{ notice }}</div>
-
     <section v-if="tab === 'dashboard'" class="page">
       <div class="hero"><div><p class="eyebrow">LOCAL-FIRST MINECRAFT HOSTING</p><h2>Forge your server.<br><em>Skip the networking pain.</em></h2><p>Pixel Forge installs and runs Minecraft directly on your Windows PC.</p></div><button class="button primary big" @click="tab = 'create'">⚒ Create a server</button></div>
       <div class="stats"><div><span>Servers</span><strong>{{ servers.length }}</strong></div><div><span>Host RAM</span><strong>{{ system.totalMemoryGB }} GB</strong></div><div><span>Free RAM</span><strong>{{ system.freeMemoryGB }} GB</strong></div><div><span>Recommended</span><strong>{{ recommendedRam }} GB</strong></div></div>
@@ -137,16 +121,14 @@ onMounted(refresh)
       <div v-if="!servers.length" class="empty"><div class="forge-icon">⚒</div><h3>No servers yet</h3><p>Your first server will appear here.</p><button class="button primary" @click="tab = 'create'">Create server</button></div>
       <div v-else class="server-grid"><article v-for="server in servers" :key="server.id" class="server-card" @click="openServer(server)"><div class="server-top"><span class="status" :class="server.status">● {{ server.status }}</span><span>{{ server.edition }} · {{ server.version }}</span></div><h3>{{ server.name }}</h3><p>{{ server.software }} · {{ server.ramGb }} GB RAM</p><div class="address">127.0.0.1:{{ server.port }}</div></article></div>
     </section>
-
     <section v-else-if="tab === 'create'" class="page narrow"><div class="panel"><div class="panel-title"><div><p class="eyebrow">NEW INSTANCE</p><h2>Create your Minecraft server</h2></div></div><div class="form-grid">
       <label>Server name<input v-model="name"></label><label>Edition<select v-model="edition"><option value="java">Java</option><option value="bedrock">Bedrock</option></select></label>
       <label>Version<select v-model="version"><option v-for="v in versions" :key="v">{{ v }}</option></select></label><label>Server software<select v-model="software"><option v-for="s in softwares" :key="s" :value="s">{{ s }}</option></select></label>
       <label>RAM <span class="hint">Recommended {{ recommendedRam }} GB</span><select v-model.number="ram"><option v-for="r in ramOptions" :key="r" :value="r">{{ r }} GB</option></select></label>
       <label>Storage<select v-model.number="storage"><option v-for="s in [5,10,25,50,100]" :key="s" :value="s">{{ s }} GB</option></select></label>
     </div><div class="resource-note">🧠 {{ system.cpuModel }} · {{ system.totalMemoryGB }} GB RAM · {{ system.freeStorageGB }} GB free storage</div>
-    <label class="eula"><input type="checkbox" v-model="eulaAccepted"> I agree to the Minecraft EULA and want Pixel Forge to install the server software for me.</label>
+    <label v-if="edition === 'java'" class="eula"><input type="checkbox" v-model="eulaAccepted"> I agree to the Minecraft EULA and want Pixel Forge to install the server software for me.</label>
     <button class="button primary big full" :disabled="busy" @click="createServer">{{ busy ? 'Installing…' : 'Create & Install Server' }}</button></div></section>
-
     <section v-else-if="selected" class="page">
       <div class="server-banner"><div><span class="status" :class="selected.status">● {{ selected.status }}</span><h2>{{ selected.name }}</h2><p>{{ selected.edition }} · {{ selected.software }} {{ selected.version }}</p></div><div class="actions"><button v-if="selected.status !== 'running'" class="button primary" :disabled="busy" @click="start">▶ Start</button><button v-else class="button danger" @click="stop">■ Stop</button><button class="button" :disabled="busy" @click="restart">↻ Restart</button></div></div>
       <div class="join-card"><div><span>{{ selected.status === 'running' ? 'Join locally' : 'Local join address' }}</span><strong>{{ joinAddress }}</strong></div><button class="button" @click="navigator.clipboard?.writeText(joinAddress)">Copy address</button></div>
