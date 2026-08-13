@@ -7,37 +7,16 @@ import { randomUUID } from 'node:crypto'
 import { startLocalMinecraft, stopLocalMinecraft, sendMinecraftCommand, isMinecraftRunning } from './server-runtime.js'
 
 type Server = { id:string; name:string; edition:'java'|'bedrock'; version:string; software:string; ramGb:number; storageGb:number; port:number; createdAt:string }
-const root = () => path.join(app.getPath('userData'), 'pixel-forge')
-const serversDir = () => path.join(root(), 'servers')
-const db = () => path.join(root(), 'servers.json')
-const logs = new Map<string,string[]>()
-let servers: Server[] = []
-
-async function load(){await fs.mkdir(serversDir(),{recursive:true});if(!existsSync(db()))await fs.writeFile(db(),'[]');servers=JSON.parse(await fs.readFile(db(),'utf8'))}
-async function save(){await fs.writeFile(db(),JSON.stringify(servers,null,2))}
-function dir(id:string){return path.join(serversDir(),id)}
-function safe(id:string,file:string){const base=path.resolve(dir(id));const full=path.resolve(base,file);if(full!==base&&!full.startsWith(base+path.sep))throw new Error('Invalid path');return full}
-
+const root=()=>path.join(app.getPath('userData'),'pixel-forge');const serversDir=()=>path.join(root(),'servers');const db=()=>path.join(root(),'servers.json');const logs=new Map<string,string[]>();let servers:Server[]=[]
+async function load(){await fs.mkdir(serversDir(),{recursive:true});if(!existsSync(db()))await fs.writeFile(db(),'[]');servers=JSON.parse(await fs.readFile(db(),'utf8'))}async function save(){await fs.writeFile(db(),JSON.stringify(servers,null,2))}function dir(id:string){return path.join(serversDir(),id)}function safe(id:string,file:string){const base=path.resolve(dir(id));const full=path.resolve(base,file);if(full!==base&&!full.startsWith(base+path.sep))throw new Error('Invalid path');return full}
+function startOne(id:string){const s=servers.find(x=>x.id===id);if(!s)throw new Error('Server not found');const runtime=s.edition==='bedrock'?path.join(dir(id),'bedrock_server.exe'):path.join(dir(id),'server.jar');if(!existsSync(runtime))throw new Error(s.edition==='bedrock'?'bedrock_server.exe is missing.':'server.jar is missing.');startLocalMinecraft(id,dir(id),s.edition,s.ramGb,line=>{const list=logs.get(id)??[];list.push(line);logs.set(id,list.slice(-500))});return{...s,status:'running',players:0,maxPlayers:20,path:dir(id)}}
 const createWindow=()=>{const win=new BrowserWindow({width:1440,height:900,minWidth:1100,minHeight:700,backgroundColor:'#0d0d10',title:'Pixel Forge Hosting',webPreferences:{preload:path.join(app.getAppPath(),'dist-electron','preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true}});if(process.env.VITE_DEV_SERVER_URL)void win.loadURL(process.env.VITE_DEV_SERVER_URL);else void win.loadFile(path.join(app.getAppPath(),'dist','index.html'))}
-
 ipcMain.handle('system:info',()=>{const total=os.totalmem()/1024**3;const free=os.freemem()/1024**3;return{totalMemoryGB:+total.toFixed(1),freeMemoryGB:+free.toFixed(1),freeStorageGB:0,cpuModel:os.cpus()[0]?.model??'Unknown',cpuCores:os.cpus().length}})
 ipcMain.handle('relay:status',()=>({mode:'hybrid',connected:false,endpoint:'Relay service not configured'}))
 ipcMain.handle('servers:list',()=>servers.map(s=>({...s,status:isMinecraftRunning(s.id)?'running':'offline',players:0,maxPlayers:20,path:dir(s.id)})))
 ipcMain.handle('servers:create',async(_e,input)=>{const id=randomUUID();const s={...input,id,createdAt:new Date().toISOString()};await fs.mkdir(dir(id),{recursive:true});await fs.writeFile(path.join(dir(id),'eula.txt'),'eula=false\n');await fs.writeFile(path.join(dir(id),'server.properties'),`server-port=${s.port}\nmax-players=20\nmotd=${s.name}\n`);servers.push(s);logs.set(id,['[Pixel Forge] Server created.']);await save();return{...s,status:'offline',players:0,maxPlayers:20,path:dir(id)}})
-ipcMain.handle('servers:start',async(_e,id)=>{const s=servers.find(x=>x.id===id);if(!s)throw new Error('Server not found');const runtime=s.edition==='bedrock'?path.join(dir(id),'bedrock_server.exe'):path.join(dir(id),'server.jar');if(!existsSync(runtime))throw new Error(s.edition==='bedrock'?'bedrock_server.exe is missing.':'server.jar is missing.');startLocalMinecraft(id,dir(id),s.edition,s.ramGb,line=>{const list=logs.get(id)??[];list.push(line);logs.set(id,list.slice(-500))});return{...s,status:'running',players:0,maxPlayers:20,path:dir(id)}})
-ipcMain.handle('servers:stop',async(_e,id)=>{stopLocalMinecraft(id);const s=servers.find(x=>x.id===id);return s?{...s,status:'offline',players:0,maxPlayers:20,path:dir(id)}:undefined})
-ipcMain.handle('servers:restart',async(_e,id)=>{stopLocalMinecraft(id);await new Promise(r=>setTimeout(r,400));return ipcMain.emit('servers:start',null,id)})
-ipcMain.handle('servers:command',(_e,id,command)=>{sendMinecraftCommand(id,command);return true})
-ipcMain.handle('servers:delete',async(_e,id)=>{stopLocalMinecraft(id);await fs.rm(dir(id),{recursive:true,force:true});servers=servers.filter(s=>s.id!==id);await save()})
-ipcMain.handle('server:logs',(_e,id)=>logs.get(id)??[])
-ipcMain.handle('server:open-folder',(_e,id)=>shell.openPath(dir(id)))
-ipcMain.handle('server:files',async(_e,id,relative='')=>{const entries=await fs.readdir(safe(id,relative),{withFileTypes:true});return Promise.all(entries.map(async e=>{const p=safe(id,path.join(relative,e.name));const st=await fs.stat(p);return{name:e.name,path:path.relative(dir(id),p).replaceAll('\\','/'),directory:e.isDirectory(),size:st.size}}))})
-ipcMain.handle('server:file:read',(_e,id,file)=>fs.readFile(safe(id,file),'utf8'))
-ipcMain.handle('server:file:write',(_e,id,file,text)=>fs.writeFile(safe(id,file),text,'utf8'))
-ipcMain.handle('server:file:delete',(_e,id,file)=>fs.rm(safe(id,file),{recursive:true,force:true}))
-ipcMain.handle('server:file:mkdir',(_e,id,file)=>fs.mkdir(safe(id,file),{recursive:true}))
-ipcMain.handle('server:file:rename',(_e,id,a,b)=>fs.rename(safe(id,a),safe(id,b)))
+ipcMain.handle('servers:start',(_e,id)=>startOne(id));ipcMain.handle('servers:stop',async(_e,id)=>{stopLocalMinecraft(id);const s=servers.find(x=>x.id===id);return s?{...s,status:'offline',players:0,maxPlayers:20,path:dir(id)}:undefined});ipcMain.handle('servers:restart',async(_e,id)=>{stopLocalMinecraft(id);await new Promise(r=>setTimeout(r,400));return startOne(id)})
+ipcMain.handle('servers:command',(_e,id,command)=>{sendMinecraftCommand(id,command);return true});ipcMain.handle('servers:delete',async(_e,id)=>{stopLocalMinecraft(id);await fs.rm(dir(id),{recursive:true,force:true});servers=servers.filter(s=>s.id!==id);await save()});ipcMain.handle('server:logs',(_e,id)=>logs.get(id)??[]);ipcMain.handle('server:open-folder',(_e,id)=>shell.openPath(dir(id)))
+ipcMain.handle('server:files',async(_e,id,relative='')=>{const entries=await fs.readdir(safe(id,relative),{withFileTypes:true});return Promise.all(entries.map(async e=>{const p=safe(id,path.join(relative,e.name));const st=await fs.stat(p);return{name:e.name,path:path.relative(dir(id),p).replaceAll('\\','/'),directory:e.isDirectory(),size:st.size}}))});ipcMain.handle('server:file:read',(_e,id,file)=>fs.readFile(safe(id,file),'utf8'));ipcMain.handle('server:file:write',(_e,id,file,text)=>fs.writeFile(safe(id,file),text,'utf8'));ipcMain.handle('server:file:delete',(_e,id,file)=>fs.rm(safe(id,file),{recursive:true,force:true}));ipcMain.handle('server:file:mkdir',(_e,id,file)=>fs.mkdir(safe(id,file),{recursive:true}));ipcMain.handle('server:file:rename',(_e,id,a,b)=>fs.rename(safe(id,a),safe(id,b)))
 ipcMain.handle('server:file:choose-upload',async(_e,id)=>{const result=await dialog.showOpenDialog({properties:['openFile','multiSelections']});if(result.canceled)return[];for(const file of result.filePaths)await fs.copyFile(file,path.join(dir(id),path.basename(file)));return result.filePaths.map(path.basename)})
-
-app.whenReady().then(async()=>{await load();createWindow()})
-app.on('window-all-closed',()=>{if(process.platform!=='darwin')app.quit()})
+app.whenReady().then(async()=>{await load();createWindow()});app.on('window-all-closed',()=>{if(process.platform!=='darwin')app.quit()})
