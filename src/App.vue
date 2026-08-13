@@ -28,15 +28,44 @@ const softwares: Software[] = ['vanilla', 'paper', 'fabric', 'forge', 'neoforge'
 const recommendedRam = computed(() => Math.max(4, Math.min(32, Math.floor(system.value.totalMemoryGB * 0.5))))
 const joinAddress = computed(() => selected.value ? `127.0.0.1:${selected.value.port}` : '')
 
+function hasBackendBridge() {
+  const api = window.pixelForge
+  return !!(api?.system?.info && api?.relay?.status && api?.servers?.list)
+}
+
 async function refresh() {
-  if (!window.pixelForge) return
-  system.value = await window.pixelForge.system.info()
-  relay.value = await window.pixelForge.relay.status()
-  servers.value = await window.pixelForge.servers.list()
-  if (selected.value) selected.value = servers.value.find(s => s.id === selected.value?.id) ?? null
+  if (!hasBackendBridge()) {
+    servers.value = []
+    notice.value = 'Pixel Forge backend bridge is unavailable. Please launch the Windows Electron app instead of the web preview.'
+    return
+  }
+
+  try {
+    const api = window.pixelForge
+    const [systemInfo, relayStatus, serverList] = await Promise.all([
+      api.system.info(),
+      api.relay.status(),
+      api.servers.list(),
+    ])
+
+    system.value = systemInfo
+    relay.value = relayStatus
+    servers.value = Array.isArray(serverList) ? serverList : []
+
+    if (selected.value) {
+      selected.value = servers.value.find(s => s.id === selected.value?.id) ?? null
+    }
+  } catch (error) {
+    console.error('[Pixel Forge] Failed to refresh host state:', error)
+    servers.value = []
+    notice.value = error instanceof Error
+      ? `Pixel Forge backend error: ${error.message}`
+      : 'Pixel Forge backend failed to initialize.'
+  }
 }
 
 async function openServer(server: Server) {
+  if (!hasBackendBridge()) return
   selected.value = server
   tab.value = 'console'
   logs.value = await window.pixelForge.servers.logs(server.id)
@@ -47,11 +76,13 @@ async function openServer(server: Server) {
 
 async function createServer() {
   if (!eulaAccepted.value) { notice.value = 'Accept the Minecraft EULA before creating a Java server.'; return }
+  if (!hasBackendBridge()) { await refresh(); return }
   busy.value = true
   notice.value = `Installing ${software.value} ${version.value}… this can take a while the first time.`
   try {
     const server = await window.pixelForge.servers.create({ name: name.value, edition: edition.value, version: version.value, software: software.value, ramGb: ram.value, storageGb: storage.value, port: edition.value === 'bedrock' ? 19132 + servers.value.length : 25565 + servers.value.length, eulaAccepted: eulaAccepted.value })
-    servers.value = await window.pixelForge.servers.list()
+    const serverList = await window.pixelForge.servers.list()
+    servers.value = Array.isArray(serverList) ? serverList : []
     await openServer(server)
     notice.value = 'Server installed and ready. It is stopped by default.'
   } catch (error) { notice.value = error instanceof Error ? error.message : String(error) }
@@ -59,7 +90,7 @@ async function createServer() {
 }
 
 async function start() {
-  if (!selected.value) return
+  if (!selected.value || !hasBackendBridge()) return
   busy.value = true
   notice.value = 'Starting Minecraft…'
   try { selected.value = await window.pixelForge.servers.start(selected.value.id); logs.value = await window.pixelForge.servers.logs(selected.value.id); notice.value = `Server running. Join with ${joinAddress.value}`; await refresh() }
@@ -67,14 +98,14 @@ async function start() {
   finally { busy.value = false }
 }
 
-async function stop() { if (!selected.value) return; await window.pixelForge.servers.stop(selected.value.id); await refresh() }
-async function restart() { if (!selected.value) return; busy.value = true; try { selected.value = await window.pixelForge.servers.restart(selected.value.id); await refresh() } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } finally { busy.value = false } }
-async function sendCommand() { if (!selected.value || !command.value.trim()) return; await window.pixelForge.servers.command(selected.value.id, command.value); command.value = '' }
-async function deleteServer() { if (!selected.value || !confirm(`Delete ${selected.value.name}? This permanently removes the local server data.`)) return; await window.pixelForge.servers.delete(selected.value.id); selected.value = null; tab.value = 'dashboard'; await refresh() }
-async function loadFiles() { if (!selected.value) return; files.value = await window.pixelForge.files.list(selected.value.id); }
-async function readFile(path: string) { if (!selected.value) return; fileName.value = path; fileText.value = await window.pixelForge.files.read(selected.value.id, path) }
-async function saveFile() { if (!selected.value) return; await window.pixelForge.files.write(selected.value.id, fileName.value, fileText.value); notice.value = `${fileName.value} saved.` }
-async function upload() { if (!selected.value) return; const uploaded = await window.pixelForge.files.chooseUpload(selected.value.id); notice.value = uploaded.length ? `Uploaded ${uploaded.join(', ')}` : 'Upload cancelled.'; await loadFiles() }
+async function stop() { if (!selected.value || !hasBackendBridge()) return; await window.pixelForge.servers.stop(selected.value.id); await refresh() }
+async function restart() { if (!selected.value || !hasBackendBridge()) return; busy.value = true; try { selected.value = await window.pixelForge.servers.restart(selected.value.id); await refresh() } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } finally { busy.value = false } }
+async function sendCommand() { if (!selected.value || !command.value.trim() || !hasBackendBridge()) return; await window.pixelForge.servers.command(selected.value.id, command.value); command.value = '' }
+async function deleteServer() { if (!selected.value || !hasBackendBridge() || !confirm(`Delete ${selected.value.name}? This permanently removes the local server data.`)) return; await window.pixelForge.servers.delete(selected.value.id); selected.value = null; tab.value = 'dashboard'; await refresh() }
+async function loadFiles() { if (!selected.value || !hasBackendBridge()) return; files.value = await window.pixelForge.files.list(selected.value.id); }
+async function readFile(path: string) { if (!selected.value || !hasBackendBridge()) return; fileName.value = path; fileText.value = await window.pixelForge.files.read(selected.value.id, path) }
+async function saveFile() { if (!selected.value || !hasBackendBridge()) return; await window.pixelForge.files.write(selected.value.id, fileName.value, fileText.value); notice.value = `${fileName.value} saved.` }
+async function upload() { if (!selected.value || !hasBackendBridge()) return; const uploaded = await window.pixelForge.files.chooseUpload(selected.value.id); notice.value = uploaded.length ? `Uploaded ${uploaded.join(', ')}` : 'Upload cancelled.'; await loadFiles() }
 
 onMounted(refresh)
 </script>
