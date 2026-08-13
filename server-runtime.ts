@@ -17,6 +17,7 @@ async function getJson(url: string): Promise<any> {
 async function download(url: string, destination: string) {
   const response = await fetch(url, { headers: { 'User-Agent': UA } })
   if (!response.ok || !response.body) throw new Error(`Unable to download runtime: HTTP ${response.status}.`)
+  await fs.mkdir(path.dirname(destination), { recursive: true })
   const file = await fs.open(destination, 'w')
   try {
     const reader = response.body.getReader()
@@ -30,7 +31,32 @@ async function download(url: string, destination: string) {
 
 async function sha256(file: string) { return createHash('sha256').update(await fs.readFile(file)).digest('hex') }
 
-async function installJava(version: string, folder: string, software: string) {
+async function javaExecutable(folder: string, log: (line: string) => void) {
+  try { await execFile('java', ['-version'], { windowsHide: true }); return 'java' }
+  catch {
+    const javaHome = path.join(folder, '.pixel-forge-java21')
+    const javaExe = path.join(javaHome, 'bin', 'java.exe')
+    if (await fs.stat(javaExe).catch(() => null)) return javaExe
+    log('[Pixel Forge] Java was not found. Downloading a private Temurin Java 21 runtime...')
+    const zip = path.join(folder, '.pixel-forge-java21.zip')
+    await download('https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse', zip)
+    await fs.mkdir(javaHome, { recursive: true })
+    await execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath '${zip.replaceAll("'", "''")}' -DestinationPath '${javaHome.replaceAll("'", "''")}' -Force`], { windowsHide: true })
+    await fs.rm(zip, { force: true })
+    const nested = (await fs.readdir(javaHome, { withFileTypes: true })).find(entry => entry.isDirectory())
+    if (nested) {
+      const nestedHome = path.join(javaHome, nested.name)
+      const entries = await fs.readdir(nestedHome)
+      for (const entry of entries) await fs.rename(path.join(nestedHome, entry), path.join(javaHome, entry))
+      await fs.rm(nestedHome, { recursive: true, force: true })
+    }
+    if (!await fs.stat(javaExe).catch(() => null)) throw new Error('Temurin Java 21 downloaded but java.exe was not found.')
+    log('[Pixel Forge] Private Java 21 runtime ready.')
+    return javaExe
+  }
+}
+
+async function installJava(version: string, folder: string, software: string, log: (line: string) => void) {
   const selected = software.toLowerCase()
   if (selected === 'paper') {
     const builds = await getJson(`https://fill.papermc.io/v3/projects/paper/versions/${encodeURIComponent(version)}/builds`)
@@ -88,18 +114,21 @@ export async function ensureRuntime(edition: 'java' | 'bedrock', version: string
   log(`[Pixel Forge] Downloading ${software} ${version}...`)
   await fs.mkdir(folder, { recursive: true })
   if (edition === 'bedrock') await installBedrock(version, folder)
-  else await installJava(version, folder, software)
+  else await installJava(version, folder, software, log)
   await fs.writeFile(marker, JSON.stringify({ edition, version, software }, null, 2))
   log('[Pixel Forge] Runtime ready.')
 }
 
 export async function startLocalMinecraft(id: string, folder: string, edition: 'java' | 'bedrock', ramGb: number, log: (line: string) => void) {
   if (running.has(id)) return
-  const metadata = JSON.parse(await fs.readFile(path.join(folder, 'pixel-forge-runtime.json'), 'utf8')) as { software: string }
+  const metadata = JSON.parse(await fs.readFile(path.join(folder, 'pixel-forge-runtime.json'), 'utf8')) as { software: string; version: string }
   let child: ChildProcessWithoutNullStreams
   if (edition === 'bedrock') child = spawn(path.join(folder, 'bedrock_server.exe'), [], { cwd: folder, windowsHide: true })
   else if (metadata.software.toLowerCase() === 'forge' || metadata.software.toLowerCase() === 'neoforge') child = spawn('cmd.exe', ['/c', 'run.bat'], { cwd: folder, windowsHide: true })
-  else child = spawn('java', [`-Xms${Math.max(1, ramGb - 1)}G`, `-Xmx${ramGb}G`, '-jar', 'server.jar', 'nogui'], { cwd: folder, windowsHide: true })
+  else {
+    const java = await javaExecutable(folder, log)
+    child = spawn(java, [`-Xms${Math.max(1, ramGb - 1)}G`, `-Xmx${ramGb}G`, '-jar', 'server.jar', 'nogui'], { cwd: folder, windowsHide: true })
+  }
   running.set(id, child)
   child.stdout.on('data', data => log(String(data).trimEnd()))
   child.stderr.on('data', data => log(String(data).trimEnd()))
