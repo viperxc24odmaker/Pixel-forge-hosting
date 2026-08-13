@@ -11,12 +11,11 @@ directories:
   output: release
   buildResources: build
 win:
+  executableName: PixelForgeHosting
   target:
     - target: nsis
       arch:
         - x64
-  executableName: PixelForgeHosting
-  artifactName: Pixel-Forge-Hosting-${version}-${arch}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
