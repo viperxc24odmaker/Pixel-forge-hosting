@@ -1,0 +1,25 @@
+appId: com.pixelforge.hosting
+productName: Pixel Forge Hosting
+artifactName: Pixel-Forge-Hosting-${version}-${arch}.${ext}
+compression: maximum
+asar: true
+files:
+  - dist/**
+  - dist-electron/**
+  - package.json
+directories:
+  output: release
+  buildResources: build
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  executableName: PixelForgeHosting
+  artifactName: Pixel-Forge-Hosting-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Pixel Forge Hosting
