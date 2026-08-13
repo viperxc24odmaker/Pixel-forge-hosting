@@ -1,31 +1,131 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import type { Server, Software } from './types'
 
 type Tab = 'dashboard' | 'create' | 'console' | 'files' | 'players' | 'mods' | 'settings'
-type Server = { id: string; name: string; edition: string; version: string; software: string; ram: number; storage: number; port: number; status: 'offline' | 'running'; players: number; logs: string[] }
+const tab = ref<Tab>('dashboard')
+const servers = ref<Server[]>([])
+const selected = ref<Server | null>(null)
+const name = ref('My Survival Server')
+const edition = ref<'java' | 'bedrock'>('java')
+const version = ref('1.21.8')
+const software = ref<Software>('paper')
+const ram = ref(4)
+const storage = ref(25)
+const eulaAccepted = ref(false)
+const command = ref('')
+const logs = ref<string[]>([])
+const fileText = ref('')
+const fileName = ref('server.properties')
+const files = ref<any[]>([])
+const notice = ref('')
+const busy = ref(false)
+const system = ref({ totalMemoryGB: 16, freeMemoryGB: 8, freeStorageGB: 100, cpuModel: 'Detecting…', cpuCores: 4 })
+const relay = ref({ connected: false, endpoint: 'Local mode' })
+const ramOptions = [4, 6, 8, 10, 12, 16, 20, 24, 28, 32]
+const versions = ['1.21.8', '1.21.7', '1.21.6', '1.21.5', '1.20.6']
+const softwares: Software[] = ['vanilla', 'paper', 'fabric', 'forge', 'neoforge']
+const recommendedRam = computed(() => Math.max(4, Math.min(32, Math.floor(system.value.totalMemoryGB * 0.5))))
+const joinAddress = computed(() => selected.value ? `127.0.0.1:${selected.value.port}` : '')
 
-const tab = ref<Tab>('dashboard'); const servers = ref<Server[]>([]); const selected = ref<Server | null>(null)
-const name = ref('My Survival Server'); const edition = ref('Java'); const version = ref('1.21.8'); const software = ref('Paper'); const ram = ref(4); const storage = ref(25)
-const command = ref(''); const fileText = ref(''); const fileName = ref('server.properties'); const hostRam = ref(16); const freeRam = ref(10); const notice = ref('')
-const ramOptions = [4,6,8,10,12,16,20,24,28,32]; const versions = ['1.21.8','1.21.7','1.21.6','1.21.5','1.20.6']; const softwares = ['Vanilla','Paper','Fabric','Forge','NeoForge']
-const activeTitle = computed(() => selected.value ? selected.value.name : tab.value === 'create' ? 'Create Server' : 'Dashboard'); const recommendedRam = computed(() => Math.max(4, Math.min(32, Math.floor(hostRam.value * .5))))
-function persist(){localStorage.setItem('pfh-servers',JSON.stringify(servers.value))}; function route(next:Tab){tab.value=next}; function openServer(s:Server){selected.value=s;tab.value='console'}
-function createServer(){const s:Server={id:crypto.randomUUID(),name:name.value,edition:edition.value,version:version.value,software:software.value,ram:ram.value,storage:storage.value,port:24561+servers.value.length,status:'offline',players:0,logs:['[Pixel Forge] Server created. Runtime installation is required.']};servers.value.push(s);selected.value=s;tab.value='console';persist();notice.value='Server created. Add the runtime to its server folder before starting.'}
-function start(){if(!selected.value)return;selected.value.status='running';selected.value.logs.push('[Pixel Forge] Start requested.');persist()}; function stop(){if(!selected.value)return;selected.value.status='offline';selected.value.players=0;selected.value.logs.push('[Pixel Forge] Stop requested.');persist()}; function restart(){stop();start()}
-function sendCommand(){if(!selected.value||!command.value.trim())return;selected.value.logs.push(`> ${command.value.trim()}`);command.value='';persist()}; function deleteServer(){if(!selected.value||!confirm(`Delete ${selected.value.name}? This removes the server data.`))return;servers.value=servers.value.filter(s=>s.id!==selected.value?.id);selected.value=null;tab.value='dashboard';persist()}
-function fakeFileLoad(file:string){fileName.value=file;fileText.value=file==='server.properties'?'motd=Pixel Forge Server\nmax-players=20\nview-distance=10\nsimulation-distance=10\nserver-port=25565\n':'# Pixel Forge configuration\n'};function saveFile(){notice.value=`${fileName.value} saved.`}
-onMounted(()=>{try{servers.value=JSON.parse(localStorage.getItem('pfh-servers')||'[]')}catch{servers.value=[]}})
+async function refresh() {
+  if (!window.pixelForge) return
+  system.value = await window.pixelForge.system.info()
+  relay.value = await window.pixelForge.relay.status()
+  servers.value = await window.pixelForge.servers.list()
+  if (selected.value) selected.value = servers.value.find(s => s.id === selected.value?.id) ?? null
+}
+
+async function openServer(server: Server) {
+  selected.value = server
+  tab.value = 'console'
+  logs.value = await window.pixelForge.servers.logs(server.id)
+  window.pixelForge.servers.watchLogs(server.id, payload => {
+    if (payload.id === server.id) logs.value.push(payload.line)
+  })
+}
+
+async function createServer() {
+  if (!eulaAccepted.value) { notice.value = 'Accept the Minecraft EULA before creating a Java server.'; return }
+  busy.value = true
+  notice.value = `Installing ${software.value} ${version.value}… this can take a while the first time.`
+  try {
+    const server = await window.pixelForge.servers.create({ name: name.value, edition: edition.value, version: version.value, software: software.value, ramGb: ram.value, storageGb: storage.value, port: edition.value === 'bedrock' ? 19132 + servers.value.length : 25565 + servers.value.length, eulaAccepted: eulaAccepted.value })
+    servers.value = await window.pixelForge.servers.list()
+    await openServer(server)
+    notice.value = 'Server installed and ready. It is stopped by default.'
+  } catch (error) { notice.value = error instanceof Error ? error.message : String(error) }
+  finally { busy.value = false }
+}
+
+async function start() {
+  if (!selected.value) return
+  busy.value = true
+  notice.value = 'Starting Minecraft…'
+  try { selected.value = await window.pixelForge.servers.start(selected.value.id); logs.value = await window.pixelForge.servers.logs(selected.value.id); notice.value = `Server running. Join with ${joinAddress.value}`; await refresh() }
+  catch (error) { notice.value = error instanceof Error ? error.message : String(error); await refresh() }
+  finally { busy.value = false }
+}
+
+async function stop() { if (!selected.value) return; await window.pixelForge.servers.stop(selected.value.id); await refresh() }
+async function restart() { if (!selected.value) return; busy.value = true; try { selected.value = await window.pixelForge.servers.restart(selected.value.id); await refresh() } catch (error) { notice.value = error instanceof Error ? error.message : String(error) } finally { busy.value = false } }
+async function sendCommand() { if (!selected.value || !command.value.trim()) return; await window.pixelForge.servers.command(selected.value.id, command.value); command.value = '' }
+async function deleteServer() { if (!selected.value || !confirm(`Delete ${selected.value.name}? This permanently removes the local server data.`)) return; await window.pixelForge.servers.delete(selected.value.id); selected.value = null; tab.value = 'dashboard'; await refresh() }
+async function loadFiles() { if (!selected.value) return; files.value = await window.pixelForge.files.list(selected.value.id); }
+async function readFile(path: string) { if (!selected.value) return; fileName.value = path; fileText.value = await window.pixelForge.files.read(selected.value.id, path) }
+async function saveFile() { if (!selected.value) return; await window.pixelForge.files.write(selected.value.id, fileName.value, fileText.value); notice.value = `${fileName.value} saved.` }
+async function upload() { if (!selected.value) return; const uploaded = await window.pixelForge.files.chooseUpload(selected.value.id); notice.value = uploaded.length ? `Uploaded ${uploaded.join(', ')}` : 'Upload cancelled.'; await loadFiles() }
+
+onMounted(refresh)
 </script>
 
 <template>
-<div class="app-shell"><aside class="sidebar"><div class="brand"><span class="brand-mark">⚒</span><div><strong>PIXEL FORGE</strong><small>HOSTING</small></div></div><button class="nav-item" :class="{active:tab==='dashboard'}" @click="route('dashboard')">⌂ <span>Dashboard</span></button><button class="nav-item" :class="{active:tab==='create'}" @click="route('create')">＋ <span>Create Server</span></button><div v-if="selected" class="nav-group"><p>SERVER</p><button class="nav-item" :class="{active:tab==='console'}" @click="route('console')">▣ <span>Console</span></button><button class="nav-item" :class="{active:tab==='files'}" @click="route('files')">▤ <span>Files</span></button><button class="nav-item" :class="{active:tab==='players'}" @click="route('players')">♙ <span>Players</span></button><button class="nav-item" :class="{active:tab==='mods'}" @click="route('mods')">◆ <span>Plugins & Mods</span></button><button class="nav-item" :class="{active:tab==='settings'}" @click="route('settings')">⚙ <span>Settings</span></button></div><div class="sidebar-foot">Local-first hosting<br><span>Windows Edition</span></div></aside>
-<main class="main"><header class="topbar"><div><p class="eyebrow">{{activeTitle}}</p><h1>{{selected&&tab!=='dashboard'?selected.name:activeTitle}}</h1></div><div class="relay-pill"><i></i> Hybrid relay ready</div></header><div v-if="notice" class="notice" @click="notice=''">{{notice}}</div>
-<section v-if="tab==='dashboard'" class="page"><div class="hero"><div><p class="eyebrow">LOCAL-FIRST MINECRAFT HOSTING</p><h2>Forge your server.<br><em>Skip the networking pain.</em></h2><p>Run Java or Bedrock directly on your Windows PC, with Pixel Forge managing the hard parts.</p></div><button class="button primary big" @click="route('create')">⚒ Create a server</button></div><div class="stats"><div><span>Servers</span><strong>{{servers.length}}</strong></div><div><span>Host RAM</span><strong>{{hostRam}} GB</strong></div><div><span>Free RAM</span><strong>{{freeRam}} GB</strong></div><div><span>Recommended</span><strong>{{recommendedRam}} GB</strong></div></div><div class="section-title"><h3>Your servers</h3><span>{{servers.length}} total</span></div><div v-if="!servers.length" class="empty"><div class="forge-icon">⚒</div><h3>No servers yet</h3><p>Your first server will appear here.</p><button class="button primary" @click="route('create')">Create server</button></div><div v-else class="server-grid"><article v-for="s in servers" :key="s.id" class="server-card" @click="openServer(s)"><div class="server-top"><span class="status" :class="s.status">● {{s.status}}</span><span>{{s.edition}} · {{s.version}}</span></div><h3>{{s.name}}</h3><p>{{s.software}} · {{s.ram}} GB RAM · {{s.storage}} GB</p><div class="address">play.pixelforge.host:{{s.port}}</div></article></div></section>
-<section v-else-if="tab==='create'" class="page narrow"><div class="panel"><div class="panel-title"><div><p class="eyebrow">NEW INSTANCE</p><h2>Create your Minecraft server</h2></div></div><div class="form-grid"><label>Server name<input v-model="name"></label><label>Edition<select v-model="edition"><option>Java</option><option>Bedrock</option></select></label><label>Version<select v-model="version"><option v-for="v in versions" :key="v">{{v}}</option></select></label><label>Server software<select v-model="software"><option v-for="s in softwares" :key="s">{{s}}</option></select></label><label>RAM <span class="hint">Recommended {{recommendedRam}} GB</span><select v-model.number="ram"><option v-for="r in ramOptions" :key="r" :value="r">{{r}} GB</option></select></label><label>Storage<select v-model.number="storage"><option :value="5">5 GB</option><option :value="10">10 GB</option><option :value="25">25 GB</option><option :value="50">50 GB</option><option :value="100">100 GB</option></select></label></div><div class="resource-note">🧠 Your PC: {{hostRam}} GB RAM · Pixel Forge recommends {{recommendedRam}} GB.</div><button class="button primary big full" @click="createServer">Create server</button></div></section>
-<section v-else-if="selected" class="page"><div class="server-banner"><div><span class="status" :class="selected.status">● {{selected.status}}</span><h2>{{selected.name}}</h2><p>{{selected.edition}} · {{selected.software}} {{selected.version}}</p></div><div class="actions"><button v-if="selected.status==='offline'" class="button primary" @click="start">▶ Start</button><button v-else class="button danger" @click="stop">■ Stop</button><button class="button" @click="restart">↻ Restart</button></div></div><div class="join-card"><div><span>Java + Bedrock address</span><strong>play.pixelforge.host:{{selected.port}}</strong></div><button class="button" @click="navigator.clipboard?.writeText(`play.pixelforge.host:${selected.port}`)">Copy address</button></div>
-<div v-if="tab==='console'" class="panel console"><div class="console-head"><strong>Live console</strong><span>{{selected.logs.length}} lines</span></div><div class="console-body"><div v-for="(line,i) in selected.logs" :key="i">{{line}}</div></div><form class="command" @submit.prevent="sendCommand"><span>&gt;</span><input v-model="command" placeholder="Send a server command..." :disabled="selected.status!=='running'"></form></div>
-<div v-else-if="tab==='files'" class="panel"><div class="panel-title"><h3>Server files</h3><button class="button" @click="notice='File picker is available in the Electron build.'">Upload files</button></div><div class="file-row" v-for="file in ['server.properties','eula.txt','world/','plugins/','mods/']" :key="file" @click="fakeFileLoad(file)"><span>{{file.endsWith('/')?'📁':'📄'}} {{file}}</span><span class="muted">Open</span></div><textarea v-model="fileText" class="editor" spellcheck="false"></textarea><div class="editor-actions"><button class="button primary" @click="saveFile">Save {{fileName}}</button></div></div>
-<div v-else-if="tab==='players'" class="panel"><div class="panel-title"><h3>Players</h3><span>{{selected.players}} online</span></div><div class="empty compact"><div class="forge-icon">♙</div><h3>No players online</h3><p>Player controls will appear here when the server reports players.</p></div></div>
-<div v-else-if="tab==='mods'" class="panel"><div class="panel-title"><div><h3>Plugins & Mods</h3><p class="muted">Compatible installs for {{selected.software}}.</p></div><button class="button">Upload .jar</button></div><div class="catalog"><article v-for="item in ['EssentialsX','LuckPerms','ViaVersion','WorldEdit']" :key="item"><strong>{{item}}</strong><span>Compatible package</span><button class="button">Install</button></article></div></div>
-<div v-else class="panel"><div class="panel-title"><h3>Server settings</h3></div><div class="settings-grid"><label>MOTD<input value="Pixel Forge Server"></label><label>Max players<input type="number" value="20"></label><label>View distance<input type="number" value="10"></label><label>Simulation distance<input type="number" value="10"></label></div></div><div class="danger-zone"><div><strong>Delete server</strong><p>This permanently removes its local data.</p></div><button class="button danger" @click="deleteServer">Delete</button></div></section></main></div>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">⚒</span><div><strong>PIXEL FORGE</strong><small>HOSTING</small></div></div>
+    <button class="nav-item" :class="{active: tab === 'dashboard'}" @click="tab = 'dashboard'">⌂ <span>Dashboard</span></button>
+    <button class="nav-item" :class="{active: tab === 'create'}" @click="tab = 'create'">＋ <span>Create Server</span></button>
+    <div v-if="selected" class="nav-group"><p>SERVER</p>
+      <button class="nav-item" :class="{active: tab === 'console'}" @click="tab = 'console'">▣ <span>Console</span></button>
+      <button class="nav-item" :class="{active: tab === 'files'}" @click="tab = 'files'; loadFiles()">▤ <span>Files</span></button>
+      <button class="nav-item" :class="{active: tab === 'players'}" @click="tab = 'players'">♙ <span>Players</span></button>
+      <button class="nav-item" :class="{active: tab === 'mods'}" @click="tab = 'mods'">◆ <span>Plugins & Mods</span></button>
+      <button class="nav-item" :class="{active: tab === 'settings'}" @click="tab = 'settings'">⚙ <span>Settings</span></button>
+    </div>
+    <div class="sidebar-foot">Local-first hosting<br><span>Windows Edition</span></div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar"><div><p class="eyebrow">{{ selected && tab !== 'dashboard' ? selected.name : 'PIXEL FORGE HOSTING' }}</p><h1>{{ tab === 'dashboard' ? 'Dashboard' : tab === 'create' ? 'Create Server' : selected?.name }}</h1></div><div class="relay-pill"><i :class="{on: relay.connected}"></i>{{ relay.connected ? 'Relay connected' : 'Local mode' }}</div></header>
+    <div v-if="notice" class="notice" @click="notice = ''">{{ notice }}</div>
+
+    <section v-if="tab === 'dashboard'" class="page">
+      <div class="hero"><div><p class="eyebrow">LOCAL-FIRST MINECRAFT HOSTING</p><h2>Forge your server.<br><em>Skip the networking pain.</em></h2><p>Pixel Forge installs and runs Minecraft directly on your Windows PC.</p></div><button class="button primary big" @click="tab = 'create'">⚒ Create a server</button></div>
+      <div class="stats"><div><span>Servers</span><strong>{{ servers.length }}</strong></div><div><span>Host RAM</span><strong>{{ system.totalMemoryGB }} GB</strong></div><div><span>Free RAM</span><strong>{{ system.freeMemoryGB }} GB</strong></div><div><span>Recommended</span><strong>{{ recommendedRam }} GB</strong></div></div>
+      <div class="section-title"><h3>Your servers</h3><span>{{ servers.length }} total</span></div>
+      <div v-if="!servers.length" class="empty"><div class="forge-icon">⚒</div><h3>No servers yet</h3><p>Your first server will appear here.</p><button class="button primary" @click="tab = 'create'">Create server</button></div>
+      <div v-else class="server-grid"><article v-for="server in servers" :key="server.id" class="server-card" @click="openServer(server)"><div class="server-top"><span class="status" :class="server.status">● {{ server.status }}</span><span>{{ server.edition }} · {{ server.version }}</span></div><h3>{{ server.name }}</h3><p>{{ server.software }} · {{ server.ramGb }} GB RAM</p><div class="address">127.0.0.1:{{ server.port }}</div></article></div>
+    </section>
+
+    <section v-else-if="tab === 'create'" class="page narrow"><div class="panel"><div class="panel-title"><div><p class="eyebrow">NEW INSTANCE</p><h2>Create your Minecraft server</h2></div></div><div class="form-grid">
+      <label>Server name<input v-model="name"></label><label>Edition<select v-model="edition"><option value="java">Java</option><option value="bedrock">Bedrock</option></select></label>
+      <label>Version<select v-model="version"><option v-for="v in versions" :key="v">{{ v }}</option></select></label><label>Server software<select v-model="software"><option v-for="s in softwares" :key="s" :value="s">{{ s }}</option></select></label>
+      <label>RAM <span class="hint">Recommended {{ recommendedRam }} GB</span><select v-model.number="ram"><option v-for="r in ramOptions" :key="r" :value="r">{{ r }} GB</option></select></label>
+      <label>Storage<select v-model.number="storage"><option v-for="s in [5,10,25,50,100]" :key="s" :value="s">{{ s }} GB</option></select></label>
+    </div><div class="resource-note">🧠 {{ system.cpuModel }} · {{ system.totalMemoryGB }} GB RAM · {{ system.freeStorageGB }} GB free storage</div>
+    <label class="eula"><input type="checkbox" v-model="eulaAccepted"> I agree to the Minecraft EULA and want Pixel Forge to install the server software for me.</label>
+    <button class="button primary big full" :disabled="busy" @click="createServer">{{ busy ? 'Installing…' : 'Create & Install Server' }}</button></div></section>
+
+    <section v-else-if="selected" class="page">
+      <div class="server-banner"><div><span class="status" :class="selected.status">● {{ selected.status }}</span><h2>{{ selected.name }}</h2><p>{{ selected.edition }} · {{ selected.software }} {{ selected.version }}</p></div><div class="actions"><button v-if="selected.status !== 'running'" class="button primary" :disabled="busy" @click="start">▶ Start</button><button v-else class="button danger" @click="stop">■ Stop</button><button class="button" :disabled="busy" @click="restart">↻ Restart</button></div></div>
+      <div class="join-card"><div><span>{{ selected.status === 'running' ? 'Join locally' : 'Local join address' }}</span><strong>{{ joinAddress }}</strong></div><button class="button" @click="navigator.clipboard?.writeText(joinAddress)">Copy address</button></div>
+      <div v-if="tab === 'console'" class="panel console"><div class="console-head"><strong>Live console</strong><span>{{ logs.length }} lines</span></div><div class="console-body"><div v-for="(line, i) in logs" :key="i">{{ line }}</div></div><form class="command" @submit.prevent="sendCommand"><span>&gt;</span><input v-model="command" placeholder="Send a server command…" :disabled="selected.status !== 'running'"></form></div>
+      <div v-else-if="tab === 'files'" class="panel"><div class="panel-title"><h3>Server files</h3><button class="button" @click="upload">Upload files</button></div><div class="file-row" v-for="file in files" :key="file.path" @click="!file.directory && readFile(file.path)"><span>{{ file.directory ? '📁' : '📄' }} {{ file.path }}</span><span class="muted">{{ file.directory ? '' : `${file.size} bytes` }}</span></div><textarea v-if="fileText" v-model="fileText" class="editor" spellcheck="false"></textarea><div v-if="fileText" class="editor-actions"><button class="button primary" @click="saveFile">Save {{ fileName }}</button></div></div>
+      <div v-else-if="tab === 'players'" class="panel"><div class="panel-title"><h3>Players</h3><span>0 online</span></div><div class="empty compact"><div class="forge-icon">♙</div><h3>Player discovery coming next</h3><p>The server process is real; player parsing will be added without faking data.</p></div></div>
+      <div v-else-if="tab === 'mods'" class="panel"><div class="panel-title"><div><h3>Plugins & Mods</h3><p class="muted">Use the real server folder for now.</p></div><button class="button" @click="upload">Upload .jar</button></div><div class="empty compact"><div class="forge-icon">◆</div><h3>Manual installs are live</h3><p>Upload plugin/mod JAR files directly into the server directory. Marketplace integration is next.</p></div></div>
+      <div v-else class="panel"><div class="panel-title"><h3>Server settings</h3></div><div class="settings-grid"><label>Port<input type="number" :value="selected.port" disabled></label><label>RAM<input type="number" :value="selected.ramGb" disabled></label><label>Version<input :value="selected.version" disabled></label><label>Software<input :value="selected.software" disabled></label></div></div>
+      <div class="danger-zone"><div><strong>Delete server</strong><p>This permanently removes its local data.</p></div><button class="button danger" @click="deleteServer">Delete</button></div>
+    </section>
+  </main>
+</div>
 </template>
