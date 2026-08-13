@@ -31,7 +31,8 @@ async function download(url: string, destination: string) {
 async function sha256(file: string) { return createHash('sha256').update(await fs.readFile(file)).digest('hex') }
 
 async function installJava(version: string, folder: string, software: string) {
-  if (software === 'Paper') {
+  const selected = software.toLowerCase()
+  if (selected === 'paper') {
     const builds = await getJson(`https://fill.papermc.io/v3/projects/paper/versions/${encodeURIComponent(version)}/builds`)
     const build = Array.isArray(builds) ? builds.find((entry: any) => entry.channel === 'STABLE') : null
     const downloadInfo = build?.downloads?.['server:default']
@@ -42,7 +43,7 @@ async function installJava(version: string, folder: string, software: string) {
     if (expected && await sha256(target) !== expected) throw new Error('Paper download failed SHA-256 verification.')
     return
   }
-  if (software === 'Fabric') {
+  if (selected === 'fabric') {
     const loaders = await getJson(`https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(version)}`)
     const loader = loaders.find((entry: any) => entry.stable) ?? loaders[0]
     const installers = await getJson('https://meta.fabricmc.net/v2/versions/installer')
@@ -51,7 +52,7 @@ async function installJava(version: string, folder: string, software: string) {
     await download(`https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(version)}/${encodeURIComponent(loader.version)}/${encodeURIComponent(installer.version)}/server/jar`, path.join(folder, 'server.jar'))
     return
   }
-  if (software === 'Forge' || software === 'NeoForge') throw new Error(`${software} automatic installation is not enabled in this build yet.`)
+  if (selected === 'forge' || selected === 'neoforge') throw new Error(`${software} automatic installation is not enabled in this build yet.`)
   const manifest = await getJson('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json')
   const entry = manifest.versions.find((item: any) => item.id === version && item.type === 'release')
   if (!entry) throw new Error(`Minecraft Java ${version} was not found in Mojang's release manifest.`)
@@ -70,7 +71,7 @@ async function installBedrock(folder: string) {
   const page = await fetch('https://www.minecraft.net/en-us/download/server/bedrock', { headers: { 'User-Agent': UA } })
   if (!page.ok) throw new Error('Unable to open the official Bedrock server download page.')
   const html = await page.text()
-  const links = [...html.matchAll(/https?:\\/\\/[^\"']*bedrock-server-[0-9.]+\\.zip/g)].map(match => match[0])
+  const links = [...html.matchAll(/https?:\/\/[^\"']*bedrock-server-[0-9.]+\.zip/g)].map(match => match[0])
   const url = links[0]
   if (!url) throw new Error('Could not locate the official Windows Bedrock server download.')
   const zip = path.join(folder, 'bedrock-server.zip')
@@ -94,13 +95,9 @@ export async function startLocalMinecraft(id: string, folder: string, edition: '
   if (running.has(id)) return
   const metadata = JSON.parse(await fs.readFile(path.join(folder, 'pixel-forge-runtime.json'), 'utf8')) as { software: string }
   let child: ChildProcessWithoutNullStreams
-  if (edition === 'bedrock') {
-    child = spawn(path.join(folder, 'bedrock_server.exe'), [], { cwd: folder, windowsHide: true })
-  } else if (metadata.software === 'Forge' || metadata.software === 'NeoForge') {
-    child = spawn('cmd.exe', ['/c', 'run.bat'], { cwd: folder, windowsHide: true })
-  } else {
-    child = spawn('java', [`-Xms${Math.max(1, ramGb - 1)}G`, `-Xmx${ramGb}G`, '-jar', 'server.jar', 'nogui'], { cwd: folder, windowsHide: true })
-  }
+  if (edition === 'bedrock') child = spawn(path.join(folder, 'bedrock_server.exe'), [], { cwd: folder, windowsHide: true })
+  else if (metadata.software.toLowerCase() === 'forge' || metadata.software.toLowerCase() === 'neoforge') child = spawn('cmd.exe', ['/c', 'run.bat'], { cwd: folder, windowsHide: true })
+  else child = spawn('java', [`-Xms${Math.max(1, ramGb - 1)}G`, `-Xmx${ramGb}G`, '-jar', 'server.jar', 'nogui'], { cwd: folder, windowsHide: true })
   running.set(id, child)
   child.stdout.on('data', data => log(String(data).trimEnd()))
   child.stderr.on('data', data => log(String(data).trimEnd()))
