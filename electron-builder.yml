@@ -3,6 +3,7 @@ productName: Pixel Forge Hosting
 artifactName: Pixel-Forge-Hosting-${version}-${arch}.${ext}
 compression: maximum
 asar: true
+publish: never
 files:
   - dist/**
   - dist-electron/**
