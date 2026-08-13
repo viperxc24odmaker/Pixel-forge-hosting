@@ -1,6 +1,6 @@
 export type Edition = 'java' | 'bedrock'
 export type Software = 'vanilla' | 'paper' | 'fabric' | 'forge' | 'neoforge'
-export type ServerStatus = 'stopped' | 'running' | 'missing-runtime'
+export type ServerStatus = 'offline' | 'running' | 'starting' | 'error'
 
 export interface Server {
   id: string
@@ -15,35 +15,28 @@ export interface Server {
   status: ServerStatus
   players: number
   maxPlayers: number
-  logs: string[]
+  path: string
+  eulaAccepted?: boolean
 }
 
 export interface SystemInfo {
-  platform: string
-  arch: string
-  cpu: string
-  cores: number
-  totalRamGb: number
-  freeRamGb: number
-  recommendedRamGb: number
+  totalMemoryGB: number
+  freeMemoryGB: number
+  freeStorageGB: number
+  cpuModel: string
+  cpuCores: number
 }
 
-export interface FileEntry {
-  name: string
-  path: string
-  directory: boolean
-  size: number
-  modifiedAt: string
-}
+export interface FileEntry { name: string; path: string; directory: boolean; size: number }
 
 declare global {
   interface Window {
-    pixelForge?: {
+    pixelForge: {
       system: { info(): Promise<SystemInfo> }
       relay: { status(): Promise<{ mode: string; connected: boolean; endpoint: string }> }
       servers: {
         list(): Promise<Server[]>
-        create(input: Omit<Server, 'id' | 'createdAt' | 'status' | 'players' | 'maxPlayers' | 'logs'>): Promise<Server>
+        create(input: Omit<Server, 'id' | 'createdAt' | 'status' | 'players' | 'maxPlayers' | 'path'>): Promise<Server>
         start(id: string): Promise<Server>
         stop(id: string): Promise<Server | undefined>
         restart(id: string): Promise<Server>
