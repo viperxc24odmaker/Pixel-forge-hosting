@@ -1,7 +1,7 @@
 {
   "name": "pixel-forge-hosting",
   "version": "0.1.0",
-  "description": "Pixel Forge Hosting - simple local Minecraft hosting for Windows",
+  "description": "Pixel Forge Hosting - local-first Minecraft hosting for Windows",
   "main": "dist-electron/main.js",
   "author": "Pixel Forge Hosting",
   "license": "MIT",
@@ -9,6 +9,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:electron": "electron .",
     "build:web": "vite build",
     "build:electron": "tsc -p electron/tsconfig.json",
     "build": "npm run build:web && npm run build:electron",
